@@ -101,7 +101,7 @@ def format_lines(video_ids, predictions, top_k, whitelisted_cls_mask=None):
     line = [(class_index, predictions[video_index][class_index])
             for class_index in top_indices]
     line = sorted(line, key=lambda p: -p[1])
-    yield (video_ids[video_index] + "," +
+    yield (video_ids[video_index].decode('utf-8') + "," +
            " ".join("%i %g" % (label, score) for (label, score) in line) +
            "\n").encode("utf8")
 
