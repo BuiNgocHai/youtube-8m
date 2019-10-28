@@ -35,6 +35,10 @@ import tensorflow as tf
 from tensorflow import app
 from tensorflow import flags
 
+from threading import Thread
+import threading
+import time
+
 FLAGS = flags.FLAGS
 
 # In OpenCV3.X, this is available as cv2.CAP_PROP_POS_MSEC
@@ -99,7 +103,7 @@ def frame_iterator(filename, every_ms=1000, max_num_frames=300):
   """
   video_capture = cv2.VideoCapture()
   if not video_capture.open(filename):
-    print >> sys.stderr, 'Error: Cannot open video file ' + filename
+    print ( sys.stderr, 'Error: Cannot open video file ' + filename)
     return
   last_ts = -99999  # The timestamp of last retrieved frame.
   num_retrieved = 0
@@ -144,13 +148,13 @@ def quantize(features, min_quantized_value=-2.0, max_quantized_value=2.0):
 
   return _make_bytes(features)
 
-
-def main(unused_argv):
+def write_csv(all_video):
   extractor = feature_extractor.YouTube8MFeatureExtractor(FLAGS.model_dir)
   writer = tf.python_io.TFRecordWriter(FLAGS.output_tfrecords_file)
   total_written = 0
   total_error = 0
-  for video_file, labels in csv.reader(open(FLAGS.input_videos_csv)):
+  for video_file, labels in all_video.items():
+    import ipdb; ipdb.set_trace()
     rgb_features = []
     sum_rgb_features = None
     for rgb in frame_iterator(
@@ -163,7 +167,7 @@ def main(unused_argv):
       rgb_features.append(_bytes_feature(quantize(features)))
 
     if not rgb_features:
-      print >> sys.stderr, 'Could not get features for ' + video_file
+      print ( sys.stderr, 'Could not get features for ' + video_file)
       total_error += 1
       continue
 
@@ -203,6 +207,29 @@ def main(unused_argv):
   writer.close()
   print('Successfully encoded %i out of %i videos' %
         (total_written, total_written + total_error))
+
+def main(unused_argv):
+  all_video = []
+  total_video = {}
+  count = 0 
+  for video_file, label in csv.reader(open(FLAGS.input_videos_csv)):
+    total_video[video_file] = label
+    count +=1
+    if count == 500:
+        all_video.append(total_video)
+        total_video = {}
+        count = 0
+
+  if count != 0:
+    all_video.append(total_video)
+
+  
+  for index in range(len(all_video)):
+    thread = threading.Thread(target=write_csv, args=(all_video[index],))
+    print(len(all_video[index]))
+    thread.start()
+    thread.join()
+    print('Thread done : ', index)
 
 
 if __name__ == '__main__':
