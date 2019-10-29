@@ -87,7 +87,10 @@ if __name__ == '__main__':
       'If set, inserts features with name "audio" to be 128-D '
       'zero vectors. This allows you to use YouTube-8M '
       'pre-trained model.')
-
+  flags.DEFINE_integer(
+    'video_of_thread',1,
+    'Number of video on one thread'
+  )
 
 def frame_iterator(filename, every_ms=1000, max_num_frames=300):
   """Uses OpenCV to iterate over all frames of filename at a given frequency.
@@ -212,10 +215,13 @@ def main(unused_argv):
   total_video = {}
   count = 0 
   writer = tf.python_io.TFRecordWriter(FLAGS.output_tfrecords_file)
+  data = csv.reader(open(FLAGS.input_videos_csv))
+  total_video_csv = sum(1 for row in data) 
+  video_thread = int(total_video_csv/FLAGS.video_of_thread)
   for video_file, label in csv.reader(open(FLAGS.input_videos_csv)):
     total_video[video_file] = label
     count +=1
-    if count == 500:
+    if count == video_thread:
         all_video.append(total_video)
         total_video = {}
         count = 0
