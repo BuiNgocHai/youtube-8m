@@ -47,6 +47,11 @@ Then, you can create the `tfrecord` by calling the binary:
     python extract_tfrecords_main.py --input_videos_csv /path/to/vid_dataset.csv \
         --output_tfrecords_file /path/to/output.tfrecord
 
+Run on multiple threads if your data set is large:
+    
+    python extract_tfrecords_main.py --input_videos_csv /path/to/vid_dataset.csv \
+        --output_tfrecords_file /path/to/output.tfrecord --video_of_thread=10
+    
 Now, you can use the output file for training and/or inference using our starter
 code.
 
