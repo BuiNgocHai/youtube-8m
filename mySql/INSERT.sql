@@ -1,0 +1,2 @@
+INSERT INTO kinghub.post_category(`post_id`,`card_type`,`link`, `link_crc32`, `video_cate_3`)                        
+VALUES(1234,3,'https://12278739077595283.lotuscdn.vn/121198567535677440/2020/1.mp4',23034912,3000 )
