@@ -1,100 +1,101 @@
-# Copyright 2017 Google Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS-IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""Produces tfrecord files similar to the YouTube-8M dataset.
-
-It processes a CSV file containing lines like "<video_file>,<labels>", where
-<video_file> must be a path of a video, and <labels> must be an integer list
-joined with semi-colon ";". It processes all videos and outputs tfrecord file
-onto --output_tfrecords_file.
-
-It assumes that you have OpenCV installed and properly linked with ffmpeg (i.e.
-function `cv2.VideoCapture().open('/path/to/some/video')` should return True).
-
-The binary only processes the video stream (images) and not the audio stream.
-"""
-
-import csv
 import os
+import numpy as np 
+from time import sleep
+from threading import Thread
+import threading
+import shutil
+import pymysql
 import sys
-
+import wget
+import csv
+import time
 import cv2
 import feature_extractor
-import numpy
 import tensorflow as tf
 from tensorflow import app
 from tensorflow import flags
+import subprocess
+
 sys.path.append('/storage/haibn/yt8m/code/video_classification/feature_extractor/vggish/')
-from threading import Thread
-import threading
-import time
 from vggish import convert,vggish_inference
+
+
+CAP_PROP_POS_MSEC = 0
 FLAGS = flags.FLAGS
 
-# In OpenCV3.X, this is available as cv2.CAP_PROP_POS_MSEC
-# In OpenCV2.X, this is available as cv2.cv.CV_CAP_PROP_POS_MSEC
-CAP_PROP_POS_MSEC = 0
+flags.DEFINE_string(
+    'output_tfrecords_file', None,
+    'File containing tfrecords will be written at this path.')
+flags.DEFINE_string(
+    'input_videos_csv', None,
+    'CSV file with lines "<video_file>,<labels>", where '
+    '<video_file> must be a path of a video and <labels> '
+    'must be an integer list joined with semi-colon ";"')
+# Optional flags.
+flags.DEFINE_string('model_dir', os.path.join(os.getenv('HOME'), 'yt8m'),
+                    'Directory to store model files. It defaults to ~/yt8m')
 
-if __name__ == '__main__':
-  # Required flags for input and output.
-  flags.DEFINE_string(
-      'output_tfrecords_file', None,
-      'File containing tfrecords will be written at this path.')
-  flags.DEFINE_string(
-      'input_videos_csv', None,
-      'CSV file with lines "<video_file>,<labels>", where '
-      '<video_file> must be a path of a video and <labels> '
-      'must be an integer list joined with semi-colon ";"')
-  # Optional flags.
-  flags.DEFINE_string('model_dir', os.path.join(os.getenv('HOME'), 'yt8m'),
-                      'Directory to store model files. It defaults to ~/yt8m')
-
-  # The following flags are set to match the YouTube-8M dataset format.
-  flags.DEFINE_integer('frames_per_second', 1,
-                       'This many frames per second will be processed')
-  flags.DEFINE_boolean(
-      'skip_frame_level_features', False,
-      'If set, frame-level features will not be written: only '
-      'video-level features will be written with feature '
-      'names mean_*')
-  flags.DEFINE_string(
-      'labels_feature_key', 'labels',
-      'Labels will be written to context feature with this '
-      'key, as int64 list feature.')
-  flags.DEFINE_string(
-      'image_feature_key', 'rgb',
-      'Image features will be written to sequence feature with '
-      'this key, as bytes list feature, with only one entry, '
-      'containing quantized feature string.')
-  flags.DEFINE_string(
-      'video_file_feature_key', 'id',
-      'Input <video_file> will be written to context feature '
-      'with this key, as bytes list feature, with only one '
-      'entry, containing the file path of the video. This '
-      'can be used for debugging but not for training or eval.')
-  flags.DEFINE_boolean(
-      'insert_zero_audio_features', True,
-      'If set, inserts features with name "audio" to be 128-D '
-      'zero vectors. This allows you to use YouTube-8M '
-      'pre-trained model.')
-  flags.DEFINE_integer(
-    'video_of_thread',1,
-    'Number of video on one thread'
-  )
-  flags.DEFINE_boolean(
-  'extract_wav',True,
-  'Status accept extrac_wav'
+# The following flags are set to match the YouTube-8M dataset format.
+flags.DEFINE_integer('frames_per_second', 1,
+                    'This many frames per second will be processed')
+flags.DEFINE_boolean(
+    'skip_frame_level_features', False,
+    'If set, frame-level features will not be written: only '
+    'video-level features will be written with feature '
+    'names mean_*')
+flags.DEFINE_string(
+    'labels_feature_key', 'labels',
+    'Labels will be written to context feature with this '
+    'key, as int64 list feature.')
+flags.DEFINE_string(
+    'image_feature_key', 'rgb',
+    'Image features will be written to sequence feature with '
+    'this key, as bytes list feature, with only one entry, '
+    'containing quantized feature string.')
+flags.DEFINE_string(
+    'video_file_feature_key', 'id',
+    'Input <video_file> will be written to context feature '
+    'with this key, as bytes list feature, with only one '
+    'entry, containing the file path of the video. This '
+    'can be used for debugging but not for training or eval.')
+flags.DEFINE_boolean(
+    'insert_zero_audio_features', True,
+    'If set, inserts features with name "audio" to be 128-D '
+    'zero vectors. This allows you to use YouTube-8M '
+    'pre-trained model.')
+flags.DEFINE_integer(
+'video_of_thread',1,
+'Number of video on one thread'
 )
+flags.DEFINE_boolean(
+'extract_wav',True,
+'Status accept extrac_wav'
+)
+
+path = '/storage1/haibn/data_yt8m_vid/'
+def dowload_video(url, post_id, id_video, label):
+    os.makedirs(path + 'crawl/' + post_id + '/',exist_ok=True)
+    name = id_video
+    try:
+        name_csv = post_id + '.csv'
+        name_video = name + '.mp4'
+        url = 'http://172.26.46.99'+url[19:]
+        print('Dowload video: ' + url)
+
+        wget.download(url, path +'crawl/' + post_id + '/' + name_video)
+        #save in csv
+        with open(path + 'crawl/' + post_id + '/' + name_csv, mode = 'a') as output_file:
+            check = True
+            for file_name in os.listdir(path + 'crawl/' + post_id):
+                if (file_name[-4:] != '.mp4' and file_name[-4:] != '.csv'):
+                    check = False 
+            writer = csv.writer(output_file, delimiter =',', quotechar ='"', quoting = csv.QUOTE_MINIMAL)
+            writer.writerow([path + 'crawl/' + post_id + '/'+name_video, label])
+    except:
+        print('Dowload fail ' + url)
+        e = sys.exc_info()
+        print(e)
+
 
 def frame_iterator(filename, every_ms=1000, max_num_frames=300):
   """Uses OpenCV to iterate over all frames of filename at a given frequency.
@@ -148,7 +149,7 @@ def quantize(features, min_quantized_value=-2.0, max_quantized_value=2.0):
   """Quantizes float32 `features` into string."""
   assert features.dtype == 'float32'
   assert len(features.shape) == 1  # 1-D array
-  features = numpy.clip(features, min_quantized_value, max_quantized_value)
+  features = np.clip(features, min_quantized_value, max_quantized_value)
   quantize_range = max_quantized_value - min_quantized_value
   features = (features - min_quantized_value) * (255.0 / quantize_range)
   features = [int(round(f)) for f in features]
@@ -268,21 +269,27 @@ def write_csv(all_video, writer):
               feature_lists=tf.train.FeatureLists(feature_list=feature_list))
         writer.write(example.SerializeToString())
         total_written += 1
-
+        update_cmd = 'UPDATE adnetwork_task.youtube_crawler \
+          SET status_process = 1\
+            WHERE VideoID = "' +video_file[38:-4] +'"'
+        cursor.execute(update_cmd)
+        db.commit()
+        os.remove(video_file)
+        os.remove(video_file[:-4]+'.wav')
   
   print('Successfully encoded %i out of %i videos' %
         (total_written, total_written + total_error))
 
-def main(unused_argv):
+def call_ex(input_videos_csv, output_tfrecords_file, video_of_thread):
   all_video = []
   total_video = {}
   count = 0 
-  writer = tf.python_io.TFRecordWriter(FLAGS.output_tfrecords_file)
-  data = csv.reader(open(FLAGS.input_videos_csv))
+  writer = tf.python_io.TFRecordWriter(output_tfrecords_file)
+  data = csv.reader(open(input_videos_csv))
   total_video_csv = sum(1 for row in data) 
-  video_thread = int(total_video_csv/FLAGS.video_of_thread)
+  video_thread = int(total_video_csv/video_of_thread)
   
-  for video_file, label in csv.reader(open(FLAGS.input_videos_csv)):
+  for video_file, label in csv.reader(open(input_videos_csv)):
     total_video[video_file] = label
     count +=1
     if count == video_thread:
@@ -299,6 +306,46 @@ def main(unused_argv):
     print(len(all_video[index]))
     thread.start()
     print('Thread done : ', index)
+    
 
+db = pymysql.connect("123.30.58.145",'big_data',password = '1')
+cursor = db.cursor()
 if __name__ == '__main__':
-  app.run(main)
+    #read data from data base
+    print("Read data from db")
+    sql = "select VideoID,Label,S3Link from adnetwork_task.youtube_crawler"
+    
+    cursor.execute(sql)
+    results = cursor.fetchall()
+    index = 1 
+    count = 0 
+    all_data = []
+    for i in results:
+        count += 1
+        
+        if count%1000 == 0: 
+            all_data.append(results[count - 1000 :count])
+    #print(all_data)
+    
+    for val in all_data:
+        for item in val:
+            name = item[0]
+            label = item[1]
+            link = item[2]
+        
+            thread = threading.Thread(target=dowload_video, args=(link, str(index), name, label ))
+            thread.start()
+            print('Thread done : ')
+        path_csv = path +'crawl/' + str(index) + '/' + str(index)+'.csv'
+        path_tfrecord = path +'train/' + str(index)+'.tfrecord'
+        index+=1
+        count = 0
+        thread.join()
+        # command_extract = 'python3 /storage/haibn/yt8m/code/video_classification/feature_extractor/extract_tfrecords_main.py --input_videos_csv=' + path_csv + ' --output_tfrecords_file=' + path_tfrecord + ' --extract_wav=True --video_of_thread=1000'
+        # subprocess.call(command_extract, shell=True)
+        call_ex(path_csv, path_tfrecord, 1000)
+        
+
+        #shutil.rmtree(path+'crawl/' + str(index -1 ) + '/')
+    #create writer file 
+    #writer = tf.python_io.TFRecordWriter(FLAGS.output_tfrecords_file)
